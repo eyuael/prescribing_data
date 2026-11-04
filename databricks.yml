@@ -1,0 +1,117 @@
+# Databricks Asset Bundle for the EPD pipeline.
+#   databricks bundle validate -t dev
+#   databricks bundle deploy   -t dev
+#   databricks bundle run epd_monthly -t dev --params start_month=202501,end_month=202501
+bundle:
+  name: epd_pipeline
+
+variables:
+  catalog:
+    description: Unity Catalog catalog
+    default: workspace
+  schema:
+    description: Schema holding bronze/silver/gold tables and the raw volume
+    default: epd
+  alert_email:
+    description: Failure alert recipient (required for prod)
+
+sync:
+  exclude:
+    - .venv/**
+    - exploration/**
+    - tests/**
+    - .pytest_cache/**
+
+resources:
+  jobs:
+    epd_monthly:
+      name: epd_monthly
+      description: ingest -> bronze -> silver -> quality -> gold
+      max_concurrent_runs: 1   # two runs would fight over checkpoints and replaceWhere
+
+      # Empty months mean "latest month published on NHSBSA".
+      # Set both for a backfill, e.g. start_month=202501 end_month=202506.
+      parameters:
+        - name: start_month
+          default: ""
+        - name: end_month
+          default: ""
+
+      # NHSBSA's publication day isn't fixed. Every stage is idempotent, so a
+      # run that finds nothing new just rebuilds the same month. Adjust the
+      # day once you know when files appear.
+      schedule:
+        quartz_cron_expression: "0 0 8 15 * ?"   # 08:00 on the 15th
+        timezone_id: Europe/London
+        pause_status: PAUSED   # unpause per target below
+
+      tasks:
+        - task_key: ingest
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, ingest]
+          max_retries: 2   # network downloads are flaky
+          min_retry_interval_millis: 300000
+
+        - task_key: bronze
+          depends_on: [{task_key: ingest}]
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, bronze]
+          # Auto Loader stops on purpose when it sees a new column;
+          # the retry picks up the evolved schema.
+          max_retries: 1
+
+        - task_key: silver
+          depends_on: [{task_key: bronze}]
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, silver]
+
+        # Raises on bad data, so gold never runs on a suspect month.
+        - task_key: quality
+          depends_on: [{task_key: silver}]
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, quality]
+
+        - task_key: gold
+          depends_on: [{task_key: quality}]
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, gold]
+
+targets:
+  dev:
+    default: true
+    mode: development   # prefixes names with [dev <user>] and pauses schedules
+    variables:
+      schema: epd_dev   # keep dev runs out of the real tables
+
+  prod:
+    mode: production
+    variables:
+      schema: epd
+    resources:
+      jobs:
+        epd_monthly:
+          schedule:
+            pause_status: UNPAUSED
+          email_notifications:
+            on_failure:
+              - ${var.alert_email}
