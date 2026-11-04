@@ -173,6 +173,19 @@ def to_silver(df, src):
     df = df.toDF(*[c.strip().lower() for c in df.columns])
     have = set(df.columns)
 
+    # Legacy EPD files use YYYYMM; SNOMED EPD files use YYYY-MM.  Use
+    # tolerant parsing so a malformed value is filtered below instead of
+    # terminating the streaming query under ANSI mode.
+    def year_month():
+        value = "trim(cast(`year_month` AS STRING))"
+        return F.expr(f"""
+            coalesce(
+              try_to_date({value}, 'yyyyMM'),
+              try_to_date({value}, 'yyyy-MM'),
+              try_to_date({value}, 'yyyy-MM-dd')
+            )
+        """).alias("year_month")
+
     def text(name):
         present = [F.col(c) for c in FALLBACKS.get(name, [name]) if c in have]
         col = F.trim(F.coalesce(*present)) if present else F.lit(None).cast("string")
@@ -185,7 +198,7 @@ def to_silver(df, src):
         return F.lit(None).cast(dtype).alias(name)
 
     return (df.select(
-                F.to_date(F.col("year_month"), "yyyyMM").alias("year_month"),
+                year_month(),
                 *[text(c) for c in STRING_COLS],
                 *[number(c, t) for c, t in NUMERIC_COLS.items()],
                 F.lit(src).alias("source"),
