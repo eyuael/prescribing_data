@@ -28,6 +28,14 @@ class Config:
         return f"{self.catalog}.{self.schema}.silver_epd"
 
     @property
+    def bronze_list_size(self) -> str:
+        return f"{self.catalog}.{self.schema}.bronze_list_size"
+
+    @property
+    def silver_list_size(self) -> str:
+        return f"{self.catalog}.{self.schema}.silver_list_size"
+
+    @property
     def gold_practice_month(self) -> str:
         return f"{self.catalog}.{self.schema}.gold_practice_month"
 

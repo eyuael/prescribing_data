@@ -101,8 +101,20 @@ resources:
                          --end-month, "{{job.parameters.end_month}}",
                          --stages, quality]
 
+        # Independent of EPD stages; gold waits for it to compute per-1,000 rates.
+        - task_key: list_size
+          environment_key: default
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, list_size]
+          max_retries: 2
+          min_retry_interval_millis: 300000
+
         - task_key: gold
-          depends_on: [{task_key: quality}]
+          depends_on: [{task_key: quality}, {task_key: list_size}]
           environment_key: default
           spark_python_task:
             python_file: jobs/run_monthly.py
