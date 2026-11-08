@@ -24,6 +24,8 @@ from .config import Config
 PUBLICATION_URL = ("https://digital.nhs.uk/data-and-information/publications/"
                    "statistical/patients-registered-at-a-gp-practice/{month_name}-{year}")
 ZIP_NAME = "gp-reg-pat-prac-all.zip"
+# digital.nhs.uk can reject the default python-requests User-Agent.
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; epd-pipeline)"}
 LINK_RE = re.compile(r'https://files\.digital\.nhs\.uk/[^"\'\s<>]*' + re.escape(ZIP_NAME))
 
 SILVER_DDL = """
@@ -62,12 +64,18 @@ def ingest_list_size(cfg: Config) -> None:
         if os.path.exists(target):
             print("list_size", month, "already landed")
             continue
-        page = requests.get(publication_url(month), timeout=60)
-        url = find_zip_url(page.text) if page.ok else None
+        page_url = publication_url(month)
+        page = requests.get(page_url, timeout=60, headers=HEADERS)
+        if not page.ok:
+            # A blocked or failing request is not the same as "not published",
+            # so fail with the real status instead of hiding it.
+            raise RuntimeError(f"{page_url} returned HTTP {page.status_code} "
+                               f"(body starts: {page.text[:200]!r})")
+        url = find_zip_url(page.text)
         if url is None:
             missing.append(month)
             continue
-        resp = requests.get(url, timeout=300)
+        resp = requests.get(url, timeout=300, headers=HEADERS)
         resp.raise_for_status()
         with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
             name = next(n for n in z.namelist() if n.lower().endswith(".csv"))
