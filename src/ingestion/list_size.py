@@ -12,7 +12,9 @@ Flow mirrors the EPD: landing CSV -> bronze (Auto Loader, strings) -> silver
 """
 import calendar
 import io
+import json
 import os
+import pathlib
 import re
 import shutil
 import zipfile
@@ -24,6 +26,12 @@ from .config import Config
 PUBLICATION_URL = ("https://digital.nhs.uk/data-and-information/publications/"
                    "statistical/patients-registered-at-a-gp-practice/{month_name}-{year}")
 ZIP_NAME = "gp-reg-pat-prac-all.zip"
+# Known month -> zip URL. The publication page sits behind a Cloudflare
+# challenge that blocks Databricks, but the file host (S3) does not, so
+# URLs listed here skip the page entirely. Add a line each month, copied from
+# the "all persons" link on that month's publication page.
+MANIFEST = pathlib.Path(__file__).with_name("list_size_urls.json")
+
 # digital.nhs.uk can reject the default python-requests User-Agent.
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; epd-pipeline)"}
 LINK_RE = re.compile(r'https://files\.digital\.nhs\.uk/[^"\'\s<>]*' + re.escape(ZIP_NAME))
@@ -51,6 +59,19 @@ def find_zip_url(html: str) -> str | None:
     return m.group(0) if m else None
 
 
+def scrape_zip_url(requests, month: str) -> str | None:
+    """Find the zip link on the publication page. None if the page has no link yet."""
+    page_url = publication_url(month)
+    page = requests.get(page_url, timeout=60, headers=HEADERS)
+    if page.status_code == 403:
+        raise RuntimeError(
+            f"{page_url} is blocked (HTTP 403, Cloudflare challenge). Add {month} to "
+            f"{MANIFEST.name}, or upload list_size_{month}.csv to landing/list_size/ by hand.")
+    if not page.ok:
+        raise RuntimeError(f"{page_url} returned HTTP {page.status_code}")
+    return find_zip_url(page.text)
+
+
 def ingest_list_size(cfg: Config) -> None:
     import requests  # only the landing stage needs it
 
@@ -58,20 +79,14 @@ def ingest_list_size(cfg: Config) -> None:
     for d in ("_staging", "landing/list_size"):
         os.makedirs(f"{cfg.vol}/{d}", exist_ok=True)
 
+    known_urls = json.loads(MANIFEST.read_text())
     missing = []
     for month in cfg.months():
         target = f"{landing}/list_size_{month}.csv"
         if os.path.exists(target):
             print("list_size", month, "already landed")
             continue
-        page_url = publication_url(month)
-        page = requests.get(page_url, timeout=60, headers=HEADERS)
-        if not page.ok:
-            # A blocked or failing request is not the same as "not published",
-            # so fail with the real status instead of hiding it.
-            raise RuntimeError(f"{page_url} returned HTTP {page.status_code} "
-                               f"(body starts: {page.text[:200]!r})")
-        url = find_zip_url(page.text)
+        url = known_urls.get(month) or scrape_zip_url(requests, month)
         if url is None:
             missing.append(month)
             continue
