@@ -36,6 +36,34 @@ class Config:
         return f"{self.catalog}.{self.schema}.silver_list_size"
 
     @property
+    def bronze_ods(self) -> str:
+        return f"{self.catalog}.{self.schema}.bronze_ods"
+
+    @property
+    def dim_practice(self) -> str:
+        return f"{self.catalog}.{self.schema}.dim_practice"
+
+    @property
+    def dim_practice_succession(self) -> str:
+        return f"{self.catalog}.{self.schema}.dim_practice_succession"
+
+    @property
+    def bronze_onspd(self) -> str:
+        return f"{self.catalog}.{self.schema}.bronze_onspd"
+
+    @property
+    def silver_onspd(self) -> str:
+        return f"{self.catalog}.{self.schema}.silver_onspd"
+
+    @property
+    def bronze_imd(self) -> str:
+        return f"{self.catalog}.{self.schema}.bronze_imd"
+
+    @property
+    def silver_imd(self) -> str:
+        return f"{self.catalog}.{self.schema}.silver_imd"
+
+    @property
     def gold_practice_month(self) -> str:
         return f"{self.catalog}.{self.schema}.gold_practice_month"
 

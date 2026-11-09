@@ -12,7 +12,9 @@ from pyspark.sql import SparkSession
 from .bronze import bronze
 from .config import Config
 from .gold import gold
+from .geography import geography
 from .list_size import list_size
+from .ods import ods
 from .ingest import ingest, latest_published_month
 from .quality import quality
 from .silver import silver
@@ -23,6 +25,8 @@ STAGES = {
     "silver": silver,
     "quality": quality,
     "list_size": list_size,
+    "ods": ods,
+    "geography": geography,
     "gold": gold,
 }
 

@@ -113,8 +113,33 @@ resources:
           max_retries: 2
           min_retry_interval_millis: 300000
 
+        # Reference data: not month-specific, so --start/--end are ignored.
+        # ods: snapshot of NHS practice records -> dim_practice (SCD2) + succession.
+        - task_key: ods
+          environment_key: default
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, ods]
+          max_retries: 2
+          min_retry_interval_millis: 300000
+
+        # geography: ONS Postcode Directory + IoD 2025 -> silver_onspd, silver_imd.
+        - task_key: geography
+          environment_key: default
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, geography]
+          max_retries: 1
+
         - task_key: gold
-          depends_on: [{task_key: quality}, {task_key: list_size}]
+          depends_on: [{task_key: quality}, {task_key: list_size},
+                       {task_key: ods}, {task_key: geography}]
           environment_key: default
           spark_python_task:
             python_file: jobs/run_monthly.py

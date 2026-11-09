@@ -21,6 +21,7 @@ import zipfile
 
 from pyspark.sql import DataFrame, SparkSession, functions as F
 
+from .autoloader import load_to_bronze
 from .config import Config
 
 PUBLICATION_URL = ("https://digital.nhs.uk/data-and-information/publications/"
@@ -106,26 +107,8 @@ def ingest_list_size(cfg: Config) -> None:
 # ---- bronze --------------------------------------------------------------
 
 def bronze_list_size(spark: SparkSession, cfg: Config) -> None:
-    landing = cfg.landing("list_size")
-    if not os.path.isdir(landing) or not os.listdir(landing):
-        print("No list size files, skipping")
-        return
-    (spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "csv")
-        .option("header", "true")
-        .option("cloudFiles.allowOverwrites", "true")
-        .option("cloudFiles.schemaLocation", f"{cfg.vol}/_checkpoints/bronze_list_size/schema")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(landing)
-        .withColumn("_source_file", F.col("_metadata.file_path"))
-        .withColumn("_file_modified_at", F.col("_metadata.file_modification_time"))
-        .withColumn("_ingested_at", F.current_timestamp())
-        .writeStream
-        .option("checkpointLocation", f"{cfg.vol}/_checkpoints/bronze_list_size")
-        .option("mergeSchema", "true")
-        .trigger(availableNow=True)
-        .toTable(cfg.bronze_list_size)
-        .awaitTermination())
+    load_to_bronze(spark, cfg, name="bronze_list_size",
+                   landing=cfg.landing("list_size"), table=cfg.bronze_list_size)
 
 
 # ---- silver --------------------------------------------------------------
