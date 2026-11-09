@@ -24,7 +24,7 @@ import zipfile
 
 from pyspark.sql import DataFrame, SparkSession, functions as F
 
-from .autoloader import load_to_bronze
+from .autoloader import load_to_bronze, slug
 from .config import Config
 
 HUB_SEARCH = "https://open-geography-portalx-ons.hub.arcgis.com/api/v3/datasets"
@@ -211,10 +211,11 @@ IMD_COLUMNS = {
 
 
 def to_silver_imd(df: DataFrame) -> DataFrame:
-    by_lower = {c.strip().lower(): c for c in df.columns}
+    # Bronze stores slugged names; slugging here too accepts raw headers as well.
+    by_lower = {slug(c): c for c in df.columns}
     out = []
     for name, (prefix, dtype) in IMD_COLUMNS.items():
-        src = next((orig for low, orig in by_lower.items() if low.startswith(prefix)), None)
+        src = next((orig for low, orig in by_lower.items() if low.startswith(slug(prefix))), None)
         if src is None:
             if name in ("lsoa21_code", "imd_score", "imd_decile"):
                 raise RuntimeError(f"IoD file has no column starting '{prefix}'; layout changed")
@@ -268,6 +269,7 @@ def geography(spark: SparkSession, cfg: Config) -> None:
     ingest_onspd(cfg)
     ingest_imd(cfg)
     load_to_bronze(spark, cfg, name="bronze_onspd", landing=cfg.landing("onspd"), table=cfg.bronze_onspd)
-    load_to_bronze(spark, cfg, name="bronze_imd", landing=cfg.landing("imd"), table=cfg.bronze_imd)
+    load_to_bronze(spark, cfg, name="bronze_imd", landing=cfg.landing("imd"), table=cfg.bronze_imd,
+                   sanitize_columns=True)
     silver_onspd(spark, cfg)
     silver_imd(spark, cfg)

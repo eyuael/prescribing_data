@@ -106,3 +106,20 @@ def test_with_practice_context_asof_join_and_row_count(spark):
     assert rows[("A1", jan)].imd_decile == 3 and rows[("A1", jan)].lad_code == "E06000004"
     assert rows[("B1", jan)].lsoa21_code == "E01000002"        # EPD postcode null -> ODS postcode
     assert rows[("C1", jan)].lsoa21_code is None and rows[("C1", jan)].ods_status is None
+
+
+def test_slug_makes_delta_safe_names():
+    from ingestion.autoloader import slug
+    out = slug("Income Decile (where 1 is most deprived 10% of LSOAs)")
+    assert out == "income_decile_where_1_is_most_deprived_10_of_lsoas"
+    assert not set(" ,;{}()\n\t=") & set(out)
+    assert slug("LSOA code (2021)") == "lsoa_code_2021"
+
+
+def test_imd_silver_accepts_slugged_bronze_columns(spark):
+    from ingestion.autoloader import slug
+    cols = [slug(c) if not c.startswith("_") else c for c in IMD_HEADERS]
+    df = spark.createDataFrame([("e01000001", "City 001A", "e09000001", "City", "12.5", "30000", "9",
+                                 "8", "1", "/v/imd_2025.csv")], cols)
+    r = to_silver_imd(df).first()
+    assert (r.lsoa21_code, r.imd_decile, r.income_decile) == ("E01000001", 9, 8)
