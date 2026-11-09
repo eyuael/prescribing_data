@@ -234,7 +234,8 @@ def silver_ods(spark: SparkSession, cfg: Config) -> None:
     raw = latest_file_versions(latest_snapshot(spark.table(cfg.bronze_ods)))
     snapshot = raw.agg(F.max("_snapshot")).first()[0]
     snapshot_date = f"{snapshot[:4]}-{snapshot[4:6]}-{snapshot[6:]}"
-    silver = to_silver_ods(raw).cache()
+    # No .cache(): unsupported on serverless environment v2, and the snapshot is tiny.
+    silver = to_silver_ods(raw)
     n = silver.count()
     if n == 0:
         raise RuntimeError("Latest ODS snapshot is empty")
@@ -265,7 +266,6 @@ def silver_ods(spark: SparkSession, cfg: Config) -> None:
     (to_succession(silver).write.format("delta").mode("overwrite")
         .option("overwriteSchema", "true").saveAsTable(cfg.dim_practice_succession))
     print(f"dim_practice_succession: {spark.table(cfg.dim_practice_succession).count():,} pairs")
-    silver.unpersist()
 
 
 def ods(spark: SparkSession, cfg: Config) -> None:
