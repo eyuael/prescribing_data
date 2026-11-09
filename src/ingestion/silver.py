@@ -47,8 +47,23 @@ NUMERIC_COLS = {
 FALLBACKS = {"icb_code": ["icb_code", "stp_code"], "icb_name": ["icb_name", "stp_name"]}
 
 
+# The SNOMED-era files renamed several columns. Note `bnf_chemical_substance`
+# is a *code* in the legacy files but a *name* in the SNOMED files, so these
+# renames must be applied together, in one pass, and only when the SNOMED
+# header is present (detected by bnf_presentation_code, not by `src`).
+SNOMED_RENAMES = {
+    "bnf_chemical_substance": "chemical_substance_bnf_descr",
+    "bnf_chemical_substance_code": "bnf_chemical_substance",
+    "bnf_presentation_code": "bnf_code",
+    "bnf_presentation_name": "bnf_description",
+    "adq_usage": "adqusage",
+}
+
+
 def to_silver(df: DataFrame, src: str) -> DataFrame:
     df = df.toDF(*[c.strip().lower() for c in df.columns])
+    if "bnf_presentation_code" in df.columns:
+        df = df.toDF(*[SNOMED_RENAMES.get(c, c) for c in df.columns])
     have = set(df.columns)
 
     # Legacy EPD files use YYYYMM; SNOMED EPD files use YYYY-MM. Tolerant

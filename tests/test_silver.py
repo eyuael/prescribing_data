@@ -107,3 +107,23 @@ def test_latest_file_versions_drops_null_rows_once_newer_exists(spark):
 def test_latest_file_versions_noop_without_column(spark):
     df = spark.createDataFrame([("f1", "x")], ["_source_file", "tag"])
     assert latest_file_versions(df).count() == 1
+
+
+def test_snomed_headers_map_to_the_same_silver_columns(spark):
+    # Real header names from epd_snomed_202608.csv; note BNF_CHEMICAL_SUBSTANCE is a name here.
+    df = spark.createDataFrame([(
+        "2026-08", "Y04048", "CV34 5BW", "2127", "Lymphoedema Garments", "21270000120",
+        "Jobst Elvarex zipper", "1.", "0.", "24.44", "TS", TS)],
+        ["YEAR_MONTH", "PRACTICE_CODE", "POSTCODE", "BNF_CHEMICAL_SUBSTANCE_CODE", "BNF_CHEMICAL_SUBSTANCE",
+         "BNF_PRESENTATION_CODE", "BNF_PRESENTATION_NAME", "QUANTITY", "ADQ_USAGE", "NIC", "_source_file", "_ingested_at"])
+    r = to_silver(df, "snomed").first()
+    assert r.bnf_code == "21270000120"
+    assert r.bnf_description == "Jobst Elvarex zipper"
+    assert r.bnf_chemical_substance == "2127"
+    assert r.chemical_substance_bnf_descr == "Lymphoedema Garments"
+    assert r.adqusage == 0.0
+
+
+def test_legacy_chemical_substance_columns_unchanged_by_snomed_renames(spark):
+    r = one(spark, BNF_CHEMICAL_SUBSTANCE="0101010", CHEMICAL_SUBSTANCE_BNF_DESCR="Antacids")
+    assert r.bnf_chemical_substance == "0101010" and r.chemical_substance_bnf_descr == "Antacids"
