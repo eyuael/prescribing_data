@@ -26,7 +26,8 @@ from .config import Config
 
 PUBLICATION_URL = ("https://digital.nhs.uk/data-and-information/publications/"
                    "statistical/patients-registered-at-a-gp-practice/{month_name}-{year}")
-ZIP_NAME = "gp-reg-pat-prac-all.zip"
+# Usually a zip, but some months (e.g. April 2026, published late) are a bare CSV.
+FILE_STEM = "gp-reg-pat-prac-all"
 # Known month -> zip URL. The publication page sits behind a Cloudflare
 # challenge that blocks Databricks, but the file host (S3) does not, so
 # URLs listed here skip the page entirely. Add a line each month, copied from
@@ -35,7 +36,7 @@ MANIFEST = pathlib.Path(__file__).with_name("list_size_urls.json")
 
 # digital.nhs.uk can reject the default python-requests User-Agent.
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; epd-pipeline)"}
-LINK_RE = re.compile(r'https://files\.digital\.nhs\.uk/[^"\'\s<>]*' + re.escape(ZIP_NAME))
+LINK_RE = re.compile(r'https://files\.digital\.nhs\.uk/[^"\'\s<>]*' + re.escape(FILE_STEM) + r"\.(?:zip|csv)")
 
 SILVER_DDL = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -93,11 +94,15 @@ def ingest_list_size(cfg: Config) -> None:
             continue
         resp = requests.get(url, timeout=300, headers=HEADERS)
         resp.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-            name = next(n for n in z.namelist() if n.lower().endswith(".csv"))
-            tmp = f"{cfg.vol}/_staging/list_size_{month}.csv"
-            with z.open(name) as zin, open(tmp, "wb") as zout:
-                shutil.copyfileobj(zin, zout)
+        tmp = f"{cfg.vol}/_staging/list_size_{month}.csv"
+        if zipfile.is_zipfile(io.BytesIO(resp.content)):
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                name = next(n for n in z.namelist() if n.lower().endswith(".csv"))
+                with z.open(name) as zin, open(tmp, "wb") as zout:
+                    shutil.copyfileobj(zin, zout)
+        else:
+            with open(tmp, "wb") as zout:
+                zout.write(resp.content)
         shutil.move(tmp, target)  # staging first, so Auto Loader never sees a partial file
         print("list_size", month, "downloaded")
     if missing:

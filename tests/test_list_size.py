@@ -50,3 +50,8 @@ def test_with_list_size_rates_and_missing_lists(spark):
     assert rows["A1"].cost_per_1000 == 2000.0
     assert rows["B1"].list_size is None and rows["B1"].items_per_1000 is None  # row kept
     assert rows["C1"].items_per_1000 is None  # zero list size -> null
+
+
+def test_find_zip_url_accepts_bare_csv_months():
+    html = '<a href="https://files.digital.nhs.uk/0D/5048F1/gp-reg-pat-prac-all.csv">x</a>'
+    assert find_zip_url(html) == "https://files.digital.nhs.uk/0D/5048F1/gp-reg-pat-prac-all.csv"
