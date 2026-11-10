@@ -71,8 +71,12 @@ def _replace_months(spark: SparkSession, df: DataFrame, table: str, months: list
         df.write.format("delta").saveAsTable(table)
         return
     dates = ", ".join(f"DATE'{m[:4]}-{m[4:]}-01'" for m in months)
+    # mergeSchema: gold gains columns as enrichments are added (list size, ODS,
+    # geography). Rows for months not rebuilt keep nulls in the new columns
+    # until those months are rerun.
     (df.write.format("delta").mode("overwrite")
         .option("replaceWhere", f"year_month IN ({dates})")
+        .option("mergeSchema", "true")
         .saveAsTable(table))
 
 
