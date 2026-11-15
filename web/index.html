@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prescribing and deprivation in England</title>
+<style>
+  /* Roles, not raw hex, below this block. Series colours were validated with the
+     dataviz validator (2 categorical slots, light + dark: CVD dE ~25, normal dE ~32). */
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --s1: #2a78d6;   /* decile 1, most deprived   (categorical slot 1, blue)   */
+    --s2: #eb6834;   /* decile 10, least deprived (categorical slot 2, orange) */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --s1: #3987e5; --s2: #d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926;
+  }
+
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0 0 20px; max-width: 70ch; }
+
+  .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .filters .label { color: var(--ink-2); margin-right: 4px; }
+  button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--border);
+           border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  button:hover { background: var(--border); }
+  button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  button:focus-visible, svg:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+  .spacer { flex: 1; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+          padding: 16px 16px 12px; position: relative; transition: opacity .15s; }
+  .card.loading { opacity: .5; }
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; color: var(--ink-2); margin-bottom: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .key { width: 18px; height: 0; border-top: 2px solid; display: inline-block; border-radius: 1px; }
+
+  #chart { width: 100%; }
+  svg { display: block; width: 100%; overflow: visible; }
+  svg text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted);
+             font-variant-numeric: tabular-nums; }
+  svg text.end-label { fill: var(--ink); font-weight: 600; }
+  .grid line { stroke: var(--grid); stroke-width: 1; }
+  .axis-line { stroke: var(--axis); stroke-width: 1; }
+  .context { stroke: var(--muted); opacity: .45; }
+  .crosshair { stroke: var(--axis); stroke-width: 1; }
+
+  .tooltip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+             border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+             box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 190px; z-index: 2; }
+  .tooltip[hidden] { display: none; }
+  .tooltip .month { color: var(--ink-2); margin-bottom: 4px; }
+  .tooltip .row { display: flex; align-items: center; gap: 8px; line-height: 1.6; }
+  .tooltip .row .v { font-weight: 600; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .tooltip .row .n { color: var(--ink-2); }
+  .tooltip .row.dim .n, .tooltip .row.dim .v { color: var(--ink-2); font-weight: 400; }
+
+  .tablewrap { margin-top: 12px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--grid);
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-2); font-weight: 600; }
+
+  #status { color: var(--ink-2); padding: 24px 0; }
+  #status.error { color: var(--ink); }
+  footer { color: var(--ink-2); font-size: 12px; margin-top: 16px; max-width: 80ch; }
+  footer p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Prescriptions per 1,000 registered patients, by deprivation decile</h1>
+  <p class="sub">Monthly NHS prescription items dispensed in the community in England, divided by each
+    practice's registered patients. Decile 1 is the most deprived tenth of neighbourhoods, decile 10 the
+    least.</p>
+
+  <div class="filters" role="group" aria-label="Date range">
+    <span class="label">Show</span>
+    <button type="button" data-range="12" aria-pressed="false">Last 12 months</button>
+    <button type="button" data-range="24" aria-pressed="false">Last 24 months</button>
+    <button type="button" data-range="0"  aria-pressed="true">All months</button>
+    <span class="spacer"></span>
+    <button type="button" id="toggle-table" aria-pressed="false" aria-controls="tablewrap">Table view</button>
+  </div>
+
+  <section class="card" id="card" aria-live="polite">
+    <div id="status">Loading data…</div>
+    <div id="legend" class="legend" hidden></div>
+    <div id="chart"></div>
+    <div class="tooltip" id="tooltip" hidden></div>
+    <div class="tablewrap" id="tablewrap" hidden></div>
+  </section>
+
+  <footer>
+    <p id="meta"></p>
+    <p>Items are summed across all practices in each decile, then divided by the summed list sizes, so
+      large practices count in proportion to their patients. Practices without a list size or a postcode
+      match are left out of both sides of the ratio. Deprivation is the English Indices of Deprivation
+      2025, matched through the practice postcode. The vertical axis starts at zero.</p>
+    <p>Sources: NHS Business Services Authority (English Prescribing Dataset), NHS England (Patients
+      Registered at a GP Practice), ONS (Postcode Directory), MHCLG (English Indices of Deprivation 2025).</p>
+  </footer>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

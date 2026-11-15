@@ -12,6 +12,7 @@ from pyspark.sql import SparkSession
 from .bronze import bronze
 from .config import Config
 from .gold import gold
+from .export import export
 from .geography import geography
 from .list_size import list_size
 from .ods import ods
@@ -28,6 +29,7 @@ STAGES = {
     "ods": ods,
     "geography": geography,
     "gold": gold,
+    "export": export,
 }
 
 

@@ -54,6 +54,7 @@ resources:
             environment_version: "2"
             dependencies:
               - requests
+              - boto3   # export stage uploads to Cloudflare R2
 
       tasks:
         - task_key: ingest
@@ -147,6 +148,20 @@ resources:
                          --start-month, "{{job.parameters.start_month}}",
                          --end-month, "{{job.parameters.end_month}}",
                          --stages, gold]
+
+        # Publishes gold as Parquet for the web app. Skips upload (still writes
+        # to the volume) if the R2 secrets in scope `epd` aren't set.
+        - task_key: export
+          depends_on: [{task_key: gold}]
+          environment_key: default
+          spark_python_task:
+            python_file: jobs/run_monthly.py
+            parameters: [--catalog, "${var.catalog}", --schema, "${var.schema}",
+                         --start-month, "{{job.parameters.start_month}}",
+                         --end-month, "{{job.parameters.end_month}}",
+                         --stages, export]
+          max_retries: 2
+          min_retry_interval_millis: 300000
 
 targets:
   dev:
