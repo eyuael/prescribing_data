@@ -55,14 +55,14 @@ async function loadAll() {
   return { manifest, rows };
 }
 
-/** rows -> { months: ['2025-01', ...], byDecile: Map(decile -> [rate|null per month]) } */
+/** rows -> { months: ['2025-01', ...], byDecile: Map(decile -> [rate|null per month]), rows } */
 export function shape(rows) {
   const months = [...new Set(rows.map((r) => r.month))].sort();
   const idx = new Map(months.map((m, i) => [m, i]));
   const byDecile = new Map();
   for (let d = 1; d <= 10; d++) byDecile.set(d, new Array(months.length).fill(null));
   for (const r of rows) byDecile.get(r.decile)?.splice(idx.get(r.month), 1, r.rate);
-  return { months, byDecile };
+  return { months, byDecile, rows };
 }
 
 // ---- drawing ------------------------------------------------------------
@@ -186,6 +186,67 @@ function drawChart(container, data, onHover) {
   });
 }
 
+
+/** One month only: a time series would draw nothing, so show the ten deciles as columns. */
+function drawBars(container, month, rows, tip) {
+  container.replaceChildren();
+  const byDecile = new Map(rows.map((r) => [r.decile, r]));
+  const W = Math.max(container.clientWidth, 320);
+  const M = { top: 24, right: 12, bottom: 56, left: 52 };
+  const H = 380, pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+  const yMax = niceMax(Math.max(...rows.map((r) => r.rate)) * 1.1);
+  const y = (v) => M.top + ph - (v / yMax) * ph;
+  const slot = pw / 10, bw = Math.min(24, slot * 0.6);        // bars capped at 24px; the rest is air
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": `Column chart of prescription items per 1,000 patients for deprivation deciles 1 to 10 in ${monthLabel(month)}. A table view is available.` });
+  container.appendChild(svg);
+  const grid = el("g", { class: "grid" }, svg);
+  for (let i = 0; i <= 4; i++) {
+    const v = (yMax / 4) * i;
+    el("line", { x1: M.left, x2: W - M.right, y1: y(v), y2: y(v) }, grid);
+    el("text", { x: M.left - 8, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = fmt(v);
+  }
+  el("line", { class: "axis-line", x1: M.left, x2: W - M.right, y1: y(0), y2: y(0) }, svg);
+
+  for (let d = 1; d <= 10; d++) {
+    const r = byDecile.get(d); const cx = M.left + slot * (d - 0.5);
+    el("text", { x: cx, y: H - 34, "text-anchor": "middle" }, svg).textContent = String(d);
+    if (!r) continue;
+    const top = y(r.rate), x0 = cx - bw / 2, rad = Math.min(4, bw / 2, y(0) - top);
+    // 4px rounded data-end, square at the baseline.
+    const bar = el("path", { fill: "var(--s1)", tabindex: 0, role: "img",
+      "aria-label": `Decile ${d}: ${fmt(r.rate)} items per 1,000 patients`,
+      d: `M${x0},${y(0)} V${top + rad} Q${x0},${top} ${x0 + rad},${top} H${x0 + bw - rad} Q${x0 + bw},${top} ${x0 + bw},${top + rad} V${y(0)} Z` }, svg);
+    el("text", { class: "end-label", x: cx, y: top - 6, "text-anchor": "middle" }, svg).textContent = fmt(r.rate);
+    // Hit area is the whole column slot, not just the painted 24px.
+    const hit = el("rect", { x: cx - slot / 2, y: M.top, width: slot, height: ph, fill: "transparent" }, svg);
+    const on = () => {
+      bar.style.opacity = 0.8;
+      tip.replaceChildren();
+      const head = document.createElement("div"); head.className = "month";
+      head.textContent = `Decile ${d}${d === 1 ? " (most deprived)" : d === 10 ? " (least deprived)" : ""}`;
+      tip.appendChild(head);
+      for (const [label, value] of [["Items per 1,000 patients", fmt(r.rate)], ["Items", fmt(r.items)], ["Registered patients", fmt(r.patients)]]) {
+        const row = document.createElement("div"); row.className = "row";
+        const n = document.createElement("span"); n.className = "n"; n.textContent = label;
+        const v = document.createElement("span"); v.className = "v"; v.textContent = value;
+        row.append(n, v); tip.appendChild(row);
+      }
+      tip.hidden = false;
+      const card = tip.parentElement.getBoundingClientRect(), sv = svg.getBoundingClientRect();
+      const left = sv.left - card.left + (cx / W) * sv.width, w = tip.offsetWidth;
+      tip.style.left = `${left + 16 + w > card.width ? left - 16 - w : left + 16}px`;
+      tip.style.top = `${sv.top - card.top + 8}px`;
+    };
+    const off = () => { bar.style.opacity = 1; tip.hidden = true; };
+    hit.addEventListener("pointermove", on); hit.addEventListener("pointerleave", off);
+    bar.addEventListener("focus", on); bar.addEventListener("blur", off);
+  }
+  el("text", { x: M.left + pw / 2, y: H - 8, "text-anchor": "middle" }, svg).textContent =
+    "Deprivation decile (1 = most deprived, 10 = least deprived)";
+}
+
 function drawLegend(node) {
   node.replaceChildren();
   const item = (colour, text, opacity = 1) => {
@@ -261,8 +322,16 @@ async function main() {
     const from = full.months.length - keep;
     const view = { months: full.months.slice(from),
                    byDecile: new Map([...full.byDecile].map(([d, v]) => [d, v.slice(from)])) };
-    drawLegend($("legend"));
-    drawChart($("chart"), view, (i, px, svg) => drawTooltip($("tooltip"), view, i, px, svg));
+    const single = full.months.length === 1;
+    $("legend").hidden = single;                 // one series: the title names it
+    document.querySelector(".filters .label").parentElement.querySelectorAll("[data-range], .label")
+      .forEach((n) => { n.hidden = single; });   // date presets mean nothing for one month
+    if (single) {
+      drawBars($("chart"), full.months[0], full.rows.filter((r) => r.month === full.months[0]), $("tooltip"));
+    } else {
+      drawLegend($("legend"));
+      drawChart($("chart"), view, (i, px, svg) => drawTooltip($("tooltip"), view, i, px, svg));
+    }
     drawTable($("tablewrap"), view);
     document.querySelectorAll("[data-range]").forEach((b) =>
       b.setAttribute("aria-pressed", String(+b.dataset.range === range)));
@@ -274,9 +343,11 @@ async function main() {
     full = shape(rows);
     status.hidden = true;
     render();
-    $("meta").textContent =
-      `Data: ${full.months.length} months (${monthLabel(full.months[0])} to ${monthLabel(full.months.at(-1))}), ` +
-      `updated ${manifest.generated_at.slice(0, 10)}.`;
+    const n = full.months.length;
+    $("meta").textContent = (n === 1
+      ? `Data: ${monthLabel(full.months[0])}`
+      : `Data: ${n} months (${monthLabel(full.months[0])} to ${monthLabel(full.months.at(-1))})`) +
+      `, updated ${manifest.generated_at.slice(0, 10)}.`;
   } catch (err) {
     status.className = "error";
     status.textContent = `Couldn't load the data: ${err.message}. If the files are on another domain, ` +
