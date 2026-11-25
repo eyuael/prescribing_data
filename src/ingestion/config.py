@@ -63,6 +63,18 @@ class Config:
     def silver_imd(self) -> str:
         return f"{self.catalog}.{self.schema}.silver_imd"
 
+    def bronze_bnf(self, kind: str) -> str:
+        """kind = 'historic' | 'current': the two file layouts differ (current has YEAR_MONTH first)."""
+        return f"{self.catalog}.{self.schema}.bronze_bnf_{kind}"
+
+    @property
+    def silver_bnf_snapshot(self) -> str:
+        return f"{self.catalog}.{self.schema}.silver_bnf_snapshot"
+
+    @property
+    def dim_bnf(self) -> str:
+        return f"{self.catalog}.{self.schema}.dim_bnf"
+
     @property
     def gold_practice_month(self) -> str:
         return f"{self.catalog}.{self.schema}.gold_practice_month"

@@ -90,6 +90,7 @@ def gold(spark: SparkSession, cfg: Config) -> None:
         spark.table(cfg.dim_practice), spark.table(cfg.silver_onspd), spark.table(cfg.silver_imd))
     _replace_months(spark, pm, cfg.gold_practice_month, months)
     _report_geography_coverage(spark, cfg, months)
+    _report_bnf_coverage(spark, cfg, months)
     _replace_months(spark, bnf_chapter_month(silver), cfg.gold_bnf_chapter_month, months)
 
 
@@ -107,3 +108,25 @@ def _report_geography_coverage(spark: SparkSession, cfg: Config, months: list[st
     n = max(row["n"], 1)
     print(f"gold coverage over {row['n']:,} practice-months: no ODS {row['no_ods']/n:.1%}, "
           f"no LSOA {row['no_lsoa']/n:.1%}, no deprivation {row['no_imd']/n:.1%}")
+
+
+def _report_bnf_coverage(spark: SparkSession, cfg: Config, months: list[str]) -> None:
+    """Print, per month, the share of items whose bnf_code is in dim_bnf, and how many items sit on
+    retired codes. A month near 0% means bnf_code itself is null (renamed source column);
+    a drop in a normal month means dim_bnf is stale (rerun the bnf stage)."""
+    if not spark.catalog.tableExists(cfg.dim_bnf):
+        print("bnf coverage: dim_bnf not built yet, skipped")
+        return
+    dates = ", ".join(f"DATE'{m[:4]}-{m[4:]}-01'" for m in months)
+    rows = spark.sql(f"""
+        SELECT s.year_month,
+               sum(s.items)                                              AS items,
+               sum(CASE WHEN d.presentation_code IS NOT NULL THEN s.items END)           AS matched,
+               sum(CASE WHEN d.lineage_method = 'same_name' THEN s.items END)            AS recoded,
+               sum(CASE WHEN d.lineage_method = 'retired_no_successor' THEN s.items END) AS orphaned
+        FROM {cfg.silver} s LEFT JOIN {cfg.dim_bnf} d ON s.bnf_code = d.presentation_code
+        WHERE s.year_month IN ({dates}) GROUP BY s.year_month ORDER BY s.year_month""").collect()
+    for r in rows:
+        n = max(r["items"] or 0, 1)
+        print(f"bnf coverage {r['year_month']}: {(r['matched'] or 0) / n:.2%} of items in dim_bnf; "
+              f"{(r['recoded'] or 0) / n:.2%} on recoded codes, {(r['orphaned'] or 0) / n:.2%} on retired codes with no successor")

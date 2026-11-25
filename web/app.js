@@ -3,13 +3,19 @@
 //   ?data=https://<your-r2-domain>   points at the published files (default ./data).
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
 
-const DATA_BASE = (new URLSearchParams(location.search).get("data") || "./data").replace(/\/$/, "");
+// Published files live in R2; ?data=<url> overrides (e.g. ?data=./data for local files).
+const DEFAULT_DATA = "https://pub-6bfcdf18749d4d5a89ab83aacc61b042.r2.dev";
+const DATA_BASE = (new URLSearchParams(location.search).get("data") || DEFAULT_DATA).replace(/\/$/, "");
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SVG = "http://www.w3.org/2000/svg";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString("en-GB");
 const monthLabel = (m) => `${MON[+m.slice(5, 7) - 1]} ${m.slice(2, 4)}`;
+/** Calendar position of 'YYYY-MM', so the x axis is true time and missing months show as gaps. */
+export const ord = (m) => +m.slice(0, 4) * 12 + +m.slice(5, 7);
+/** True when month i is not the calendar month right after month i-1. */
+export const isGap = (months, i) => i > 0 && ord(months[i]) - ord(months[i - 1]) > 1;
 
 // ---- data ---------------------------------------------------------------
 
@@ -90,7 +96,8 @@ function drawChart(container, data, onHover) {
 
   const all = [...byDecile.values()].flat().filter((v) => v != null);
   const yMax = niceMax(Math.max(...all) * 1.05);
-  const x = (i) => M.left + (months.length === 1 ? pw / 2 : (i / (months.length - 1)) * pw);
+  const o0 = ord(months[0]), o1 = ord(months.at(-1));
+  const x = (i) => M.left + (o1 === o0 ? pw / 2 : ((ord(months[i]) - o0) / (o1 - o0)) * pw);
   const y = (v) => M.top + ph - (v / yMax) * ph;
 
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", tabindex: 0,
@@ -107,19 +114,21 @@ function drawChart(container, data, onHover) {
   }
   el("line", { class: "axis-line", x1: M.left, x2: W - M.right, y1: y(0), y2: y(0) }, svg);
 
-  // x ticks: about 8 labels, always including the first month.
-  const every = Math.max(1, Math.ceil(months.length / 8));
+  // x ticks: label a month only if it sits at least 64px right of the previous label.
+  let lastLabelX = -Infinity;
   months.forEach((m, i) => {
-    if (i % every) return;
+    if (x(i) - lastLabelX < 64) return;
+    lastLabelX = x(i);
     el("text", { x: x(i), y: H - 10, "text-anchor": "middle" }, svg).textContent = monthLabel(m);
   });
 
   // Context deciles 2-9 behind, then D1 and D10 on top.
-  // A gap (null) lifts the pen, so a missing month breaks the line instead of bridging it.
+  // A null value or a calendar gap lifts the pen, so missing months break the line instead of bridging it.
   const path = (vals) => {
     let d = "", penDown = false;
     vals.forEach((v, i) => {
-      if (v == null) { penDown = false; return; }
+      if (v == null || isGap(months, i)) penDown = false;
+      if (v == null) return;
       d += `${penDown ? "L" : "M"}${x(i)},${y(v)}`;
       penDown = true;
     });
@@ -136,6 +145,13 @@ function drawChart(container, data, onHover) {
     const vals = byDecile.get(d);
     el("path", { d: path(vals), fill: "none", stroke: colour, "stroke-width": 2,
                  "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    // A point with no connected neighbour would draw nothing, so give it a marker.
+    vals.forEach((v, i) => {
+      const linkedBack = i > 0 && vals[i - 1] != null && !isGap(months, i);
+      const linkedForward = i < vals.length - 1 && vals[i + 1] != null && !isGap(months, i + 1);
+      if (v != null && !linkedBack && !linkedForward)
+        el("circle", { cx: x(i), cy: y(v), r: 4, fill: colour, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    });
     const last = lastValue(vals);
     if (last) {
       // 8px end-dot with a 2px surface ring so it stays legible over the context lines.
@@ -173,7 +189,10 @@ function drawChart(container, data, onHover) {
   const nearest = (clientX) => {
     const box = svg.getBoundingClientRect();
     const px = ((clientX - box.left) / box.width) * W;
-    return Math.min(months.length - 1, Math.max(0, Math.round(((px - M.left) / pw) * (months.length - 1))));
+    // Nearest present month by pixel distance (months are not evenly spaced when there are gaps).
+    let best = 0;
+    months.forEach((_, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+    return best;
   };
   svg.addEventListener("pointermove", (e) => show(nearest(e.clientX)));
   svg.addEventListener("pointerleave", hide);
@@ -318,8 +337,9 @@ async function main() {
   let full, range = 0, resizeTimer;
 
   const render = () => {
-    const keep = range ? Math.min(range, full.months.length) : full.months.length;
-    const from = full.months.length - keep;
+    // Presets are calendar windows ("last 12 months"), not "last 12 months that have data".
+    const cutoff = ord(full.months.at(-1)) - range;
+    const from = range ? Math.max(0, full.months.findIndex((m) => ord(m) > cutoff)) : 0;
     const view = { months: full.months.slice(from),
                    byDecile: new Map([...full.byDecile].map(([d, v]) => [d, v.slice(from)])) };
     const single = full.months.length === 1;
@@ -347,6 +367,7 @@ async function main() {
     $("meta").textContent = (n === 1
       ? `Data: ${monthLabel(full.months[0])}`
       : `Data: ${n} months (${monthLabel(full.months[0])} to ${monthLabel(full.months.at(-1))})`) +
+      `${full.months.some((_, i) => isGap(full.months, i)) ? ". Months with no data are shown as gaps" : ""}` +
       `, updated ${manifest.generated_at.slice(0, 10)}.`;
   } catch (err) {
     status.className = "error";

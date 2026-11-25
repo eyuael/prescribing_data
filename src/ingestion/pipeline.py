@@ -9,6 +9,7 @@ import argparse
 
 from pyspark.sql import SparkSession
 
+from .bnf import bnf
 from .bronze import bronze
 from .config import Config
 from .gold import gold
@@ -27,6 +28,7 @@ STAGES = {
     "quality": quality,
     "list_size": list_size,
     "ods": ods,
+    "bnf": bnf,
     "geography": geography,
     "gold": gold,
     "export": export,
